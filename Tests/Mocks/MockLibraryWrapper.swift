@@ -65,9 +65,20 @@ final class MockLibraryWrapper: LibraryWrapperType {
 
     static let readTrackFunc = FuncCheck<(OpaquePointer, String)>()
     nonisolated(unsafe) static var readTrackStub: ASS_Track?
-    static func readTrack(_ library: OpaquePointer, content: String) -> ASS_Track? {
+    static func readTrack(_ library: OpaquePointer, content: String) -> UnsafeMutablePointer<ASS_Track>? {
         readTrackFunc.call((library, content))
-        return readTrackStub
+        return readTrackStub.map { stub in
+            let track = UnsafeMutablePointer<ASS_Track>.allocate(capacity: 1)
+            track.initialize(to: stub)
+            return track
+        }
+    }
+
+    static let freeTrackFunc = FuncCheck<UnsafeMutablePointer<ASS_Track>>()
+    static func freeTrack(_ track: UnsafeMutablePointer<ASS_Track>) {
+        freeTrackFunc.call(track)
+        freeTrackFunc.arguments.append(track)
+        track.deallocate()
     }
 
     static let renderImageFunc = FuncCheck<(OpaquePointer, ASS_Track, TimeInterval)>()

@@ -30,7 +30,9 @@ public final class AssSubtitlesRenderer: Sendable {
     nonisolated(unsafe) private var canvasSize: CGSize = .zero
     nonisolated(unsafe) private var canvasScale: CGFloat = 1.0
     nonisolated(unsafe) private var cancellables: Set<AnyCancellable> = []
-    nonisolated(unsafe) private(set) var currentTrack: ASS_Track?
+    /// Owned by libass. Guarded by `trackLock` so a track is never freed while being rendered or read.
+    nonisolated(unsafe) private(set) var currentTrack: UnsafeMutablePointer<ASS_Track>?
+    private let trackLock = NSLock()
     nonisolated(unsafe) private(set) var currentOffset: TimeInterval = 0
     nonisolated(unsafe) private(set) var currentFrame = CurrentValueSubject<ProcessedImage?, Never>(nil)
 
@@ -86,7 +88,7 @@ public final class AssSubtitlesRenderer: Sendable {
     }
 
     deinit {
-        freeTrack()
+        replaceTrack(with: nil)
         renderer.flatMap(wrapper.rendererDone)
         library.flatMap(wrapper.libraryDone)
     }
@@ -106,20 +108,28 @@ public final class AssSubtitlesRenderer: Sendable {
                     level: .verbose
                 ))
             }
-            freeTrack()
-            currentTrack = wrapper.readTrack(library, content: content)
+            replaceTrack(with: wrapper.readTrack(library, content: content))
         }
     }
 
-    /// Load a new track from provided content and restore the time offset to last known position.
+    /// Load a new track from provided content and render it at the current time offset.
     ///
     /// - Parameters:
     ///   - content: Raw ASS/SSA subtitle contents.
+    ///
+    /// The previous track stays visible until the new one is parsed, so no empty frame is published in between.
     public func reloadTrack(content: String) {
-        let restoreOffset = currentOffset
-        freeTrack()
-        loadTrack(content: content)
-        loadFrame(offset: restoreOffset)
+        workQueue.executeAsync { [weak self] in
+            guard let self else { return }
+            guard let library else {
+                return logger.log(message: LogMessage(
+                    message: "Track cannot be reloaded since library has not been initialized",
+                    level: .verbose
+                ))
+            }
+            replaceTrack(with: wrapper.readTrack(library, content: content))
+            setCurrentFrame(from: renderFrame(at: currentOffset) ?? .none)
+        }
     }
 
     /// Parse and load ASS/SSA subtitle track in memory.
@@ -141,20 +151,18 @@ public final class AssSubtitlesRenderer: Sendable {
     /// - Parameters:
     ///   - url: File or remote URL to subtitle contents .
     public func reloadTrack(url: URL) {
-        let restoreOffset = currentOffset
-        freeTrack()
         loadContents(from: url) { [weak self] contents in
-            guard let self else { return }
-            loadTrack(content: contents)
-            loadFrame(offset: restoreOffset)
+            self?.reloadTrack(content: contents)
         }
     }
 
     /// Removes current track and resets the time offset and current visible frame.
     public func freeTrack() {
-        currentTrack = nil
         currentFrame.value = nil
         currentOffset = 0
+        workQueue.executeAsync { [weak self] in
+            self?.replaceTrack(with: nil)
+        }
     }
 
     /// Set subtitles canvas size and scale.
@@ -223,8 +231,7 @@ public final class AssSubtitlesRenderer: Sendable {
     public func loadFrame(offset: TimeInterval, completion: @escaping @Sendable (ProcessedImage?) -> Void = { _ in }) {
         workQueue.executeAsync { [weak self] in
             defer { completion(self?.currentFrame.value) }
-            guard let self, var currentTrack else { return }
-            setCurrentFrame(from: frame(at: offset, in: &currentTrack))
+            self?.renderCurrentTrack(at: offset)
         }
     }
 
@@ -235,8 +242,7 @@ public final class AssSubtitlesRenderer: Sendable {
     ///
     /// - Returns: ``FrameRenderResult`` relative to last renderer frame.
     public func loadFrameSync(offset: TimeInterval) -> FrameRenderResult {
-        guard var currentTrack else { return .none }
-        let result = frame(at: offset, in: &currentTrack)
+        guard let result = renderFrame(at: offset) else { return .none }
         setCurrentFrame(from: result)
 
         return result
@@ -249,16 +255,40 @@ public final class AssSubtitlesRenderer: Sendable {
     ///
     /// - Returns: List of dialogue strings that are being presented at the given offset.
     public func dialogues(at offset: TimeInterval) -> [String] {
-        guard let currentTrack, let events = currentTrack.events else { return [] }
-        return (0..<Int(currentTrack.n_events)).compactMap { index in
-            let event = events.advanced(by: index).pointee
-            guard event.range.contains(offset), let text = event.Text else { return nil }
-            return String(cString: text)
+        withLock(trackLock) {
+            guard let track = currentTrack?.pointee, let events = track.events else { return [] }
+            return (0..<Int(track.n_events)).compactMap { index in
+                let event = events.advanced(by: index).pointee
+                guard event.range.contains(offset), let text = event.Text else { return nil }
+                return String(cString: text)
+            }
         }
     }
 }
 
 private extension AssSubtitlesRenderer {
+    func replaceTrack(with track: UnsafeMutablePointer<ASS_Track>?) {
+        withLock(trackLock) {
+            let previousTrack = currentTrack
+            currentTrack = track
+            previousTrack.map(wrapper.freeTrack)
+        }
+    }
+
+    func renderCurrentTrack(at offset: TimeInterval) {
+        guard let result = renderFrame(at: offset) else { return }
+        setCurrentFrame(from: result)
+    }
+
+    /// Nil without a track. The frame is published by the caller, outside `trackLock`,
+    /// so a subscriber may read dialogues.
+    func renderFrame(at offset: TimeInterval) -> FrameRenderResult? {
+        withLock(trackLock) {
+            guard let currentTrack else { return nil }
+            return frame(at: offset, in: &currentTrack.pointee)
+        }
+    }
+
     private func setCurrentFrame(from result: FrameRenderResult) {
         switch result {
         case .unchanged: break

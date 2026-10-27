@@ -230,6 +230,97 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func test_reloadTrackContent_shouldNotPublishEmptyFrameWhileReplacingTrack() throws {
+        // GIVEN
+        let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
+        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        mockImagePipeline.processStub = image
+
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setTimeOffset(10)
+        var frames: [ProcessedImage?] = []
+        subRenderer.currentFrame
+            .dropFirst()
+            .sink { frames.append($0) }
+            .store(in: &cancellables)
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: false)
+
+        // WHEN
+        subRenderer.reloadTrack(content: "<NEW_CONTENT>")
+
+        // THEN
+        XCTAssert(frames.isEmpty)
+        XCTAssertNotNil(subRenderer.currentFrame.value)
+    }
+
+    @MainActor
+    func test_reloadTrackContent_shouldFreePreviousTrack() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        let previousTrack = try XCTUnwrap(subRenderer.currentTrack)
+        mockLibraryWrapper.freeTrackFunc.reset()
+
+        // WHEN
+        subRenderer.reloadTrack(content: "<NEW_CONTENT>")
+
+        // THEN
+        XCTAssertEqual(mockLibraryWrapper.freeTrackFunc.arguments, [previousTrack])
+        XCTAssertNotNil(subRenderer.currentTrack)
+        XCTAssertNotEqual(subRenderer.currentTrack, previousTrack)
+    }
+
+    @MainActor
+    func test_reloadTrackContent_whenTrackCannotBeRead_shouldClearFrame() throws {
+        // GIVEN
+        let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        mockImagePipeline.processStub = ProcessedImage(image: .from(color: .black), imageRect: rect)
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setTimeOffset(10)
+        XCTAssertNotNil(subRenderer.currentFrame.value)
+        mockLibraryWrapper.readTrackStub = nil
+        defer { mockLibraryWrapper.readTrackStub = ASS_Track() }
+
+        // WHEN
+        subRenderer.reloadTrack(content: "<INVALID>")
+
+        // THEN
+        XCTAssertNil(subRenderer.currentTrack)
+        XCTAssertNil(subRenderer.currentFrame.value)
+    }
+
+    @MainActor
+    func test_deinit_shouldFreeTrack() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        var subRenderer: AssSubtitlesRenderer? = createRenderer()
+        subRenderer?.loadTrack(content: "<CONTENT>")
+        let track = try XCTUnwrap(subRenderer?.currentTrack)
+        mockLibraryWrapper.freeTrackFunc.reset()
+
+        // WHEN
+        subRenderer = nil
+
+        // THEN
+        XCTAssertEqual(mockLibraryWrapper.freeTrackFunc.arguments, [track])
+    }
+
+    @MainActor
     func test_loadTrackURL_shouldReadTrack() throws {
         // GIVEN
         let library = OpaquePointer(bitPattern: 1)!

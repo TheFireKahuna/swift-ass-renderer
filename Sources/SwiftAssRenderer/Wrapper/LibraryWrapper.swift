@@ -36,7 +36,8 @@ protocol LibraryWrapperType: Sendable {
         defaultFamily: String?
     )
 
-    static func readTrack(_ library: OpaquePointer, content: String) -> ASS_Track?
+    static func readTrack(_ library: OpaquePointer, content: String) -> UnsafeMutablePointer<ASS_Track>?
+    static func freeTrack(_ track: UnsafeMutablePointer<ASS_Track>)
 
     static func renderImage(
         _ renderer: OpaquePointer,
@@ -133,10 +134,16 @@ enum LibraryWrapper: LibraryWrapperType {
         }
     }
 
-    static func readTrack(_ library: OpaquePointer, content: String) -> ASS_Track? {
+    static func readTrack(_ library: OpaquePointer, content: String) -> UnsafeMutablePointer<ASS_Track>? {
         withLock(lock) {
             guard var buffer = content.cString(using: .utf8) else { return nil }
-            return ass_read_memory(library, &buffer, buffer.count, nil).pointee
+            return ass_read_memory(library, &buffer, buffer.count, nil)
+        }
+    }
+
+    static func freeTrack(_ track: UnsafeMutablePointer<ASS_Track>) {
+        withLock(lock) {
+            ass_free_track(track)
         }
     }
 

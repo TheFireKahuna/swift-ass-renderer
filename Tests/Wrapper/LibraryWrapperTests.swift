@@ -123,7 +123,7 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         LibraryWrapper.addFont(library, name: "AdobeArabic-Bold.otf", data: try Data(contentsOf: fontPath))
         LibraryWrapper.setFonts(renderer, provider: .coreText)
         LibraryWrapper.setRendererSize(renderer, size: CGSize(width: 640, height: 360))
-        var track = try XCTUnwrap(LibraryWrapper.readTrack(library, content: """
+        let track = try XCTUnwrap(LibraryWrapper.readTrack(library, content: """
         [Script Info]
         ScriptType: v4.00+
         PlayResX: 640
@@ -138,7 +138,8 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         Dialogue: 0,0:00:00.00,0:00:05.00,Default,,0,0,0,,Hello
         """))
 
-        XCTAssertNotNil(LibraryWrapper.renderImage(renderer, track: &track, at: 1))
+        defer { LibraryWrapper.freeTrack(track) }
+        XCTAssertNotNil(LibraryWrapper.renderImage(renderer, track: &track.pointee, at: 1))
         let selection = messages.first { $0.hasPrefix("fontselect: (Adobe Arabic") }
         XCTAssert(selection?.contains("AdobeArabic-Bold") == true, "\(messages)")
     }
@@ -148,7 +149,7 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         let content = try String(contentsOfFile: contentsPath.path)
         let library = try XCTUnwrap(LibraryWrapper.libraryInit())
         DispatchQueue.concurrentPerform(iterations: iterations) { _ in
-            _ = LibraryWrapper.readTrack(library, content: content)
+            LibraryWrapper.readTrack(library, content: content).map(LibraryWrapper.freeTrack)
         }
     }
 
@@ -157,10 +158,11 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         let content = try String(contentsOfFile: contentsPath.path)
         let library = try XCTUnwrap(LibraryWrapper.libraryInit())
         let renderer = try XCTUnwrap(LibraryWrapper.rendererInit(library))
-        nonisolated(unsafe) var track = try XCTUnwrap(LibraryWrapper.readTrack(library, content: content))
+        let track = try XCTUnwrap(LibraryWrapper.readTrack(library, content: content))
         LibraryWrapper.setRendererSize(renderer, size: CGSize(width: 320, height: 240))
         DispatchQueue.concurrentPerform(iterations: iterations) { _ in
-            _ = LibraryWrapper.renderImage(renderer, track: &track, at: 40.0)
+            _ = LibraryWrapper.renderImage(renderer, track: &track.pointee, at: 40.0)
         }
+        LibraryWrapper.freeTrack(track)
     }
 }

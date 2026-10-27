@@ -10,10 +10,10 @@ open class PipelineTestCase: XCTestCase {
 
     open var library: OpaquePointer!
     open var renderer: OpaquePointer!
-    open var track: ASS_Track!
+    open var track: UnsafeMutablePointer<ASS_Track>!
 
     func render(offset: TimeInterval, pipeline: ImagePipelineType) -> ProcessedImage? {
-        guard let image = LibraryWrapper.renderImage(renderer, track: &track, at: offset) else { return nil }
+        guard let image = LibraryWrapper.renderImage(renderer, track: &track.pointee, at: offset) else { return nil }
         let images = linkedImages(from: image.image)
         let boundingRect = imagesBoundingRect(images: images)
 

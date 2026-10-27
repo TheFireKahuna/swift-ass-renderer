@@ -25,7 +25,7 @@ final class AccelerateImagePipelineTests: PipelineTestCase {
     func test_processImage_fontConfig_shouldNotCrash() throws {
         for subtitle in ["en", "ru", "ar"] {
             try setup(fontProvider: .fontConfig, subtitle: subtitle)
-            for event in Array(UnsafeBufferPointer(start: track.events, count: Int(track.n_events))) {
+            for event in Array(UnsafeBufferPointer(start: track.pointee.events, count: Int(track.pointee.n_events))) {
                 _ = render(offset: TimeInterval(event.Start) / 1000, pipeline: pipeline)
             }
         }
@@ -34,7 +34,7 @@ final class AccelerateImagePipelineTests: PipelineTestCase {
     func test_processImage_coreText_shouldNotCrash() throws {
         for subtitle in ["en", "ru", "ar"] {
             try setup(fontProvider: .coreText, subtitle: subtitle)
-            for event in Array(UnsafeBufferPointer(start: track.events, count: Int(track.n_events))) {
+            for event in Array(UnsafeBufferPointer(start: track.pointee.events, count: Int(track.pointee.n_events))) {
                 _ = render(offset: TimeInterval(event.Start) / 1000, pipeline: pipeline)
             }
         }
