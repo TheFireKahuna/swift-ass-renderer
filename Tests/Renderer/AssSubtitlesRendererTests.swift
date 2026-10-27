@@ -469,6 +469,43 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func test_setTimeOffset_whenRenderIsPending_shouldRenderLatestOffsetOnce() throws {
+        // GIVEN
+        let queue = MockDeferredDispatchQueue()
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: false)
+        let subRenderer = AssSubtitlesRenderer(
+            workQueue: queue,
+            scheduler: .immediate,
+            wrapper: mockLibraryWrapper,
+            fontConfig: mockFontConfig,
+            pipeline: mockImagePipeline,
+            logger: mockLogger,
+            contentsLoader: mockContentsLoader,
+            librarySetup: nil,
+            rendererSetup: nil
+        )
+        subRenderer.loadTrack(content: "<CONTENT>")
+        queue.runPendingWork()
+        mockLibraryWrapper.renderImageFunc.reset()
+
+        // WHEN
+        subRenderer.setTimeOffset(1)
+        subRenderer.setTimeOffset(2)
+        subRenderer.setTimeOffset(3)
+
+        // THEN
+        XCTAssertEqual(queue.pendingWork.count, 1)
+        queue.runPendingWork()
+        let renderArgument = try XCTUnwrap(mockLibraryWrapper.renderImageFunc.argument)
+        XCTAssertEqual(mockLibraryWrapper.renderImageFunc.arguments.count, 1)
+        XCTAssertEqual(renderArgument.2, 3)
+        XCTAssertEqual(subRenderer.currentOffset, 3)
+    }
+
+    @MainActor
     func test_setTimeOffset_whenFrameWasLoaded_shouldReturnProcessedImage() throws {
         // GIVEN
         let library = OpaquePointer(bitPattern: 1)!

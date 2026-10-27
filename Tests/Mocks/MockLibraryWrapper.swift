@@ -89,6 +89,7 @@ final class MockLibraryWrapper: LibraryWrapperType {
         at offset: TimeInterval
     ) -> LibraryRenderResult? {
         renderImageFunc.call((renderer, track, offset))
+        renderImageFunc.arguments.append((renderer, track, offset))
         return renderImageStub
     }
 }

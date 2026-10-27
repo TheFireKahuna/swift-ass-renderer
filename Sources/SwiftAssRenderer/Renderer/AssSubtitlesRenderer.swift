@@ -33,6 +33,9 @@ public final class AssSubtitlesRenderer: Sendable {
     /// Owned by libass. Guarded by `trackLock` so a track is never freed while being rendered or read.
     nonisolated(unsafe) private(set) var currentTrack: UnsafeMutablePointer<ASS_Track>?
     private let trackLock = NSLock()
+    /// Latest offset waiting for a render, so a render slower than the call rate never queues up.
+    nonisolated(unsafe) private var pendingOffset: TimeInterval?
+    private let pendingOffsetLock = NSLock()
     nonisolated(unsafe) private(set) var currentOffset: TimeInterval = 0
     nonisolated(unsafe) private(set) var currentFrame = CurrentValueSubject<ProcessedImage?, Never>(nil)
 
@@ -195,11 +198,24 @@ public final class AssSubtitlesRenderer: Sendable {
     /// - Parameters:
     ///   - offset: Time interval (in seconds) from where to render the current visible subtitle.
     ///
-    /// This method should be called periodically to update the current visible subtitle. 
-    /// If called too often, it might result in lower performance.
+    /// This method should be called periodically to update the current visible subtitle.
+    /// Calls made while a render is pending are coalesced: only the latest offset is rendered.
     public func setTimeOffset(_ offset: TimeInterval) {
         currentOffset = offset
-        loadFrame(offset: offset)
+        let isRenderPending = withLock(pendingOffsetLock) {
+            defer { pendingOffset = offset }
+            return pendingOffset != nil
+        }
+        guard !isRenderPending else { return }
+        workQueue.executeAsync { [weak self] in
+            guard let self else { return }
+            let offset = withLock(pendingOffsetLock) {
+                defer { pendingOffset = nil }
+                return pendingOffset
+            }
+            guard let offset else { return }
+            renderCurrentTrack(at: offset)
+        }
     }
 
     /// Publisher where the rendered images to be drawn are being published.
