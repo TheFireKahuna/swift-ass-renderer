@@ -44,6 +44,14 @@ final class MockLibraryWrapper: LibraryWrapperType {
         setExtractFontsFunc.call((library, extract))
     }
 
+    static let addFontFunc = FuncCheck<(OpaquePointer, String, Data)>()
+    nonisolated(unsafe) static var setFontsCalledBeforeAddFont = false
+    static func addFont(_ library: OpaquePointer, name: String, data: Data) {
+        setFontsCalledBeforeAddFont = setFontsCalledBeforeAddFont || setFontsFunc.wasCalled
+        addFontFunc.call((library, name, data))
+        addFontFunc.arguments.append((library, name, data))
+    }
+
     static let setFontsFunc = FuncCheck<(OpaquePointer, FontProvider, String?, String?, String?)>()
     static func setFonts(
         _ renderer: OpaquePointer,

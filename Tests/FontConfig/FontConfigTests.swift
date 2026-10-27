@@ -47,7 +47,8 @@ final class FontConfigTests: XCTestCase {
         fontsCachePath: URL? = nil,
         defaultFontName: String? = nil,
         defaultFontFamily: String? = nil,
-        fontProvider: FontProvider = .fontConfig
+        fontProvider: FontProvider = .fontConfig,
+        embeddedFonts: [EmbeddedFont] = []
     ) -> FontConfig {
         FontConfig(
             fileManager: mockFileManager,
@@ -57,7 +58,8 @@ final class FontConfigTests: XCTestCase {
             fontsCachePath: fontsCachePath,
             defaultFontName: defaultFontName,
             defaultFontFamily: defaultFontFamily,
-            fontProvider: fontProvider
+            fontProvider: fontProvider,
+            embeddedFonts: embeddedFonts
         )
     }
 
@@ -212,5 +214,40 @@ final class FontConfigTests: XCTestCase {
         let setFontsArgument = try XCTUnwrap(mockLibraryWrapper.setFontsFunc.argument)
         XCTAssert(setExtractFontsArgument == (library, true))
         XCTAssert(setFontsArgument == (renderer, .coreText, fontConfPath.path, defaultFontName, defaultFontFamily))
+    }
+
+    func test_configure_withEmbeddedFonts_shouldAddFontsBeforeSettingFonts() throws {
+        // GIVEN
+        let fonts = [
+            EmbeddedFont(name: "first.ttf", data: Data([1, 2, 3])),
+            EmbeddedFont(name: "second.otf", data: Data([4, 5]))
+        ]
+        let config = createConfig(fontsPath: cachesDirectory, fontProvider: .coreText, embeddedFonts: fonts)
+        mockLibraryWrapper.addFontFunc.reset()
+        mockLibraryWrapper.setFontsFunc.reset()
+        mockLibraryWrapper.setFontsCalledBeforeAddFont = false
+
+        // WHEN
+        try config.configure(library: library, renderer: renderer)
+
+        // THEN
+        let added = mockLibraryWrapper.addFontFunc.arguments
+        XCTAssertEqual(added.map(\.0), [library, library])
+        XCTAssertEqual(added.map(\.1), ["first.ttf", "second.otf"])
+        XCTAssertEqual(added.map(\.2), [Data([1, 2, 3]), Data([4, 5])])
+        XCTAssertFalse(mockLibraryWrapper.setFontsCalledBeforeAddFont)
+        XCTAssert(mockLibraryWrapper.setFontsFunc.wasCalled)
+    }
+
+    func test_configure_withoutEmbeddedFonts_shouldNotAddFonts() throws {
+        // GIVEN
+        let config = createConfig(fontsPath: cachesDirectory)
+        mockLibraryWrapper.addFontFunc.reset()
+
+        // WHEN
+        try config.configure(library: library, renderer: renderer)
+
+        // THEN
+        XCTAssertFalse(mockLibraryWrapper.addFontFunc.wasCalled)
     }
 }

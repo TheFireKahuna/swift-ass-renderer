@@ -10,6 +10,20 @@ public enum FontProvider: Equatable, Sendable {
     case coreText
 }
 
+/// Font provided as raw data, such as a font attached to a Matroska file.
+/// It is loaded in memory by libass and takes precedence over the fonts of the ``FontProvider``.
+public struct EmbeddedFont: Equatable, Sendable {
+    /// Font file name. Only used by libass for logging, the font family is read from the font data.
+    public let name: String
+    /// TTF, OTF or TTC font file contents.
+    public let data: Data
+
+    public init(name: String, data: Data) {
+        self.name = name
+        self.data = data
+    }
+}
+
 protocol FontConfigType: Sendable {
     func configure(library: OpaquePointer, renderer: OpaquePointer) throws
 }
@@ -29,6 +43,7 @@ public struct FontConfig: FontConfigType {
     private let defaultFontName: String?
     private let defaultFontFamily: String?
     private let fontProvider: FontProvider
+    private let embeddedFonts: [EmbeddedFont]
 
     /// - Parameters:
     ///   - fontsPath: URL path to fonts directory. Can be read-only.
@@ -41,12 +56,15 @@ public struct FontConfig: FontConfigType {
     ///   - defaultFontFamily: Default font family.
     ///   This font family will be used as fallback when specified font family in tracks is not found.
     ///   - fontProvider: Default font shaper.
+    ///   - embeddedFonts: Fonts loaded from memory, whatever the ``FontProvider``.
+    ///   Use it for fonts attached to the media, which `fontsPath` only exposes to fontconfig.
     public init(
         fontsPath: URL,
         fontsCachePath: URL? = nil,
         defaultFontName: String? = nil,
         defaultFontFamily: String? = nil,
-        fontProvider: FontProvider = .fontConfig
+        fontProvider: FontProvider = .fontConfig,
+        embeddedFonts: [EmbeddedFont] = []
     ) {
         self.init(
             fileManager: FileManager.default,
@@ -56,7 +74,8 @@ public struct FontConfig: FontConfigType {
             fontsCachePath: fontsCachePath,
             defaultFontName: defaultFontName,
             defaultFontFamily: defaultFontFamily,
-            fontProvider: fontProvider
+            fontProvider: fontProvider,
+            embeddedFonts: embeddedFonts
         )
     }
 
@@ -68,7 +87,8 @@ public struct FontConfig: FontConfigType {
         fontsCachePath: URL?,
         defaultFontName: String?,
         defaultFontFamily: String?,
-        fontProvider: FontProvider
+        fontProvider: FontProvider,
+        embeddedFonts: [EmbeddedFont] = []
     ) {
         self.fileManager = fileManager
         self.moduleBundle = moduleBundle
@@ -78,6 +98,7 @@ public struct FontConfig: FontConfigType {
         self.defaultFontName = defaultFontName
         self.defaultFontFamily = defaultFontFamily
         self.fontProvider = fontProvider
+        self.embeddedFonts = embeddedFonts
     }
 
     func configure(library: OpaquePointer, renderer: OpaquePointer) throws {
@@ -105,6 +126,10 @@ public struct FontConfig: FontConfigType {
 
     private func configureLibrary(_ library: OpaquePointer, renderer: OpaquePointer) {
         libraryWrapper.setExtractFonts(library, extract: true)
+        // libass builds its font selector in `ass_set_fonts`, so memory fonts must be added first.
+        for font in embeddedFonts {
+            libraryWrapper.addFont(library, name: font.name, data: font.data)
+        }
         libraryWrapper.setFonts(
             renderer,
             provider: fontProvider,

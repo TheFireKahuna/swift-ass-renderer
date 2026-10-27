@@ -101,6 +101,48 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func test_addFont_isThreadSafety() throws {
+        let fontPath = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fonts/tahoma.ttf"))
+        let data = try Data(contentsOf: fontPath)
+        let library = try XCTUnwrap(LibraryWrapper.libraryInit())
+        DispatchQueue.concurrentPerform(iterations: 100) { _ in
+            LibraryWrapper.addFont(library, name: "tahoma.ttf", data: data)
+        }
+    }
+
+    func test_addFont_whenUsingCoreText_shouldSelectEmbeddedFont() throws {
+        let fontPath = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Fonts/AdobeArabic-Bold.otf"))
+        let library = try XCTUnwrap(LibraryWrapper.libraryInit())
+        let renderer = try XCTUnwrap(LibraryWrapper.rendererInit(library))
+        let previousLogger = LibraryWrapper.libraryLogger
+        nonisolated(unsafe) var messages: [String] = []
+        LibraryWrapper.libraryLogger = { _, message in messages.append(message) }
+        defer { LibraryWrapper.libraryLogger = previousLogger }
+        LibraryWrapper.setLogCallback(library)
+
+        LibraryWrapper.addFont(library, name: "AdobeArabic-Bold.otf", data: try Data(contentsOf: fontPath))
+        LibraryWrapper.setFonts(renderer, provider: .coreText)
+        LibraryWrapper.setRendererSize(renderer, size: CGSize(width: 640, height: 360))
+        var track = try XCTUnwrap(LibraryWrapper.readTrack(library, content: """
+        [Script Info]
+        ScriptType: v4.00+
+        PlayResX: 640
+        PlayResY: 360
+
+        [V4+ Styles]
+        Format: Name, Fontname, Fontsize, Bold
+        Style: Default,Adobe Arabic,32,-1
+
+        [Events]
+        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        Dialogue: 0,0:00:00.00,0:00:05.00,Default,,0,0,0,,Hello
+        """))
+
+        XCTAssertNotNil(LibraryWrapper.renderImage(renderer, track: &track, at: 1))
+        let selection = messages.first { $0.hasPrefix("fontselect: (Adobe Arabic") }
+        XCTAssert(selection?.contains("AdobeArabic-Bold") == true, "\(messages)")
+    }
+
     func test_readTrack_isThreadSafety() throws {
         let contentsPath = try XCTUnwrap(Bundle.module.resourceURL?.appendingPathComponent("Subs/en.ass"))
         let content = try String(contentsOfFile: contentsPath.path)

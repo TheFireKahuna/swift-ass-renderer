@@ -27,6 +27,7 @@ protocol LibraryWrapperType: Sendable {
 
     static func setRendererSize(_ renderer: OpaquePointer, size: CGSize)
     static func setExtractFonts(_ library: OpaquePointer, extract: Bool)
+    static func addFont(_ library: OpaquePointer, name: String, data: Data)
     static func setFonts(
         _ renderer: OpaquePointer,
         provider: FontProvider,
@@ -99,6 +100,20 @@ enum LibraryWrapper: LibraryWrapperType {
     static func setExtractFonts(_ library: OpaquePointer, extract: Bool) {
         withLock(lock) {
             ass_set_extract_fonts(library, extract ? 1 : 0)
+        }
+    }
+
+    static func addFont(_ library: OpaquePointer, name: String, data: Data) {
+        guard !data.isEmpty, data.count <= Int(Int32.max) else { return }
+        withLock(lock) {
+            data.withUnsafeBytes { buffer in
+                ass_add_font(
+                    library,
+                    name,
+                    buffer.baseAddress?.assumingMemoryBound(to: CChar.self),
+                    Int32(buffer.count)
+                )
+            }
         }
     }
 
