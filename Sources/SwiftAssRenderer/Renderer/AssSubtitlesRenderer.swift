@@ -29,6 +29,10 @@ public final class AssSubtitlesRenderer: Sendable {
     nonisolated(unsafe) private var renderer: OpaquePointer?
     nonisolated(unsafe) private var canvasSize: CGSize = .zero
     nonisolated(unsafe) private var canvasScale: CGFloat = 1.0
+    nonisolated(unsafe) private var frameMargins: FrameMargins = .zero
+    nonisolated(unsafe) private var usesFrameMargins = false
+    /// Bumped on each margins change, so a burst of changes (such as a pinch) renders only the latest one.
+    nonisolated(unsafe) private var marginsGeneration = 0
     nonisolated(unsafe) private var cancellables: Set<AnyCancellable> = []
     /// Owned by libass. Guarded by `trackLock` so a track is never freed while being rendered or read.
     nonisolated(unsafe) private(set) var currentTrack: UnsafeMutablePointer<ASS_Track>?
@@ -189,6 +193,34 @@ public final class AssSubtitlesRenderer: Sendable {
                 ))
             }
             wrapper.setRendererSize(renderer, size: size * scale)
+            wrapper.setMargins(renderer, margins: frameMargins * scale)
+            reloadFrame()
+        }
+    }
+
+    /// Set where the video picture sits relative to the canvas.
+    ///
+    /// - Parameters:
+    ///   - margins: Distance, in points, from the picture to each canvas edge. Negative values crop the picture.
+    ///   - useMargins: Whether regular events are laid out against the canvas instead of the picture.
+    ///   With negative margins, this keeps dialogue on screen at its unzoomed size while positioned events
+    ///   follow the picture. With positive margins, it lets dialogue move into the empty bands.
+    public func setFrameMargins(_ margins: FrameMargins, useMargins: Bool) {
+        if frameMargins == margins && usesFrameMargins == useMargins { return }
+        frameMargins = margins
+        usesFrameMargins = useMargins
+        marginsGeneration += 1
+        let generation = marginsGeneration
+        workQueue.executeAsync { [weak self] in
+            guard let self, generation == marginsGeneration else { return }
+            guard let renderer else {
+                return logger.log(message: LogMessage(
+                    message: "Can't set frame margins since renderer has not been initialized",
+                    level: .verbose
+                ))
+            }
+            wrapper.setMargins(renderer, margins: margins * canvasScale)
+            wrapper.setUseMargins(renderer, use: useMargins)
             reloadFrame()
         }
     }

@@ -67,6 +67,57 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         }
     }
 
+    func test_setMargins_isThreadSafety() throws {
+        let library = try XCTUnwrap(LibraryWrapper.libraryInit())
+        let renderer = try XCTUnwrap(LibraryWrapper.rendererInit(library))
+        DispatchQueue.concurrentPerform(iterations: iterations) { _ in
+            LibraryWrapper.setMargins(renderer, margins: FrameMargins(top: -10, bottom: -10, left: 0, right: 0))
+            LibraryWrapper.setUseMargins(renderer, use: .random())
+        }
+    }
+
+    func test_croppedFrame_withUseMargins_keepsDialogueOnScreenAndCropsPositionedEvents() throws {
+        let script = """
+        [Script Info]
+        ScriptType: v4.00+
+        PlayResX: 1920
+        PlayResY: 1080
+
+        [V4+ Styles]
+        Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, \
+        Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, \
+        MarginR, MarginV, Encoding
+        Style: Default,Arial,60,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,20,1
+
+        [Events]
+        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+        Dialogue: 0,0:00:00.00,0:00:10.00,Default,,0,0,0,,Bottom dialogue
+        Dialogue: 0,0:00:20.00,0:00:30.00,Default,,0,0,0,,{\\pos(960,1070)}Positioned sign
+        """
+        let library = try XCTUnwrap(LibraryWrapper.libraryInit())
+        let renderer = try XCTUnwrap(LibraryWrapper.rendererInit(library))
+        LibraryWrapper.setFonts(renderer, provider: .coreText, defaultFont: "Arial", defaultFamily: "Regular")
+        LibraryWrapper.setRendererSize(renderer, size: CGSize(width: 1000, height: 500))
+        LibraryWrapper.setMargins(renderer, margins: FrameMargins(top: -150, bottom: -150, left: 0, right: 0))
+        let track = try XCTUnwrap(LibraryWrapper.readTrack(library, content: script))
+        defer { LibraryWrapper.freeTrack(track) }
+
+        func renderedRect(at offset: TimeInterval) -> CGRect? {
+            LibraryWrapper.renderImage(renderer, track: &track.pointee, at: offset)
+                .map { imagesBoundingRect(images: linkedImages(from: $0.image)) }
+                .flatMap { $0.isEmpty || $0.isInfinite ? nil : $0 }
+        }
+
+        LibraryWrapper.setUseMargins(renderer, use: false)
+        XCTAssertNil(renderedRect(at: 5))
+
+        LibraryWrapper.setUseMargins(renderer, use: true)
+        let dialogue = try XCTUnwrap(renderedRect(at: 5))
+        XCTAssertGreaterThan(dialogue.minY, 250)
+        XCTAssertLessThanOrEqual(dialogue.maxY, 500)
+        XCTAssertNil(renderedRect(at: 25))
+    }
+
     func test_setExtractFonts_isThreadSafety() throws {
         let library = try XCTUnwrap(LibraryWrapper.libraryInit())
         DispatchQueue.concurrentPerform(iterations: iterations) { _ in

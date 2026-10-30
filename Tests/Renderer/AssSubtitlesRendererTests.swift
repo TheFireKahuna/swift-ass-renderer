@@ -469,6 +469,97 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func test_setFrameMargins_shouldSetScaledMarginsAndUseMargins() throws {
+        // GIVEN
+        let renderer = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = renderer
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        let margins = FrameMargins(top: -10, bottom: -10, left: 4, right: 4)
+
+        // WHEN
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setCanvasSize(CGSize(width: 1920, height: 1080), scale: 2)
+        subRenderer.setFrameMargins(margins, useMargins: true)
+
+        // THEN
+        let marginsArgument = try XCTUnwrap(mockLibraryWrapper.setMarginsFunc.argument)
+        XCTAssert(marginsArgument == (renderer, FrameMargins(top: -20, bottom: -20, left: 8, right: 8)))
+        let useArgument = try XCTUnwrap(mockLibraryWrapper.setUseMarginsFunc.argument)
+        XCTAssert(useArgument == (renderer, true))
+    }
+
+    @MainActor
+    func test_setCanvasSize_whenScaleChanges_shouldRescaleMargins() throws {
+        // GIVEN
+        let renderer = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = renderer
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+
+        // WHEN
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setFrameMargins(FrameMargins(top: -10, bottom: -10, left: 0, right: 0), useMargins: true)
+        subRenderer.setCanvasSize(CGSize(width: 1920, height: 1080), scale: 3)
+
+        // THEN
+        let argument = try XCTUnwrap(mockLibraryWrapper.setMarginsFunc.argument)
+        XCTAssert(argument == (renderer, FrameMargins(top: -30, bottom: -30, left: 0, right: 0)))
+    }
+
+    @MainActor
+    func test_setFrameMargins_whenUnchanged_shouldNotSetMarginsAgain() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        let margins = FrameMargins(top: -10, bottom: -10, left: 0, right: 0)
+
+        // WHEN
+        let subRenderer = createRenderer()
+        subRenderer.setFrameMargins(margins, useMargins: true)
+        mockLibraryWrapper.setMarginsFunc.reset()
+        subRenderer.setFrameMargins(margins, useMargins: true)
+
+        // THEN
+        XCTAssertFalse(mockLibraryWrapper.setMarginsFunc.wasCalled)
+    }
+
+    @MainActor
+    func test_setFrameMargins_whenCalledInBurst_shouldApplyLatestOnce() throws {
+        // GIVEN
+        let queue = MockDeferredDispatchQueue()
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        let subRenderer = AssSubtitlesRenderer(
+            workQueue: queue,
+            scheduler: .immediate,
+            wrapper: mockLibraryWrapper,
+            fontConfig: mockFontConfig,
+            pipeline: mockImagePipeline,
+            logger: mockLogger,
+            contentsLoader: mockContentsLoader,
+            librarySetup: nil,
+            rendererSetup: nil
+        )
+        queue.runPendingWork()
+        mockLibraryWrapper.setMarginsFunc.reset()
+
+        // WHEN
+        for top in stride(from: -1.0, through: -10.0, by: -1.0) {
+            subRenderer.setFrameMargins(FrameMargins(top: top, bottom: top, left: 0, right: 0), useMargins: true)
+        }
+        queue.runPendingWork()
+
+        // THEN
+        XCTAssertEqual(mockLibraryWrapper.setMarginsFunc.arguments.count, 1)
+        let argument = try XCTUnwrap(mockLibraryWrapper.setMarginsFunc.argument)
+        XCTAssertEqual(argument.1, FrameMargins(top: -10, bottom: -10, left: 0, right: 0))
+    }
+
+    @MainActor
     func test_setTimeOffset_whenRenderIsPending_shouldRenderLatestOffsetOnce() throws {
         // GIVEN
         let queue = MockDeferredDispatchQueue()

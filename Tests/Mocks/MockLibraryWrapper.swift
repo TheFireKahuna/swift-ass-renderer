@@ -39,6 +39,17 @@ final class MockLibraryWrapper: LibraryWrapperType {
         setRendererSizeFunc.call((renderer, size))
     }
 
+    static let setMarginsFunc = FuncCheck<(OpaquePointer, FrameMargins)>()
+    static func setMargins(_ renderer: OpaquePointer, margins: FrameMargins) {
+        setMarginsFunc.call((renderer, margins))
+        setMarginsFunc.arguments.append((renderer, margins))
+    }
+
+    static let setUseMarginsFunc = FuncCheck<(OpaquePointer, Bool)>()
+    static func setUseMargins(_ renderer: OpaquePointer, use: Bool) {
+        setUseMarginsFunc.call((renderer, use))
+    }
+
     static let setExtractFontsFunc = FuncCheck<(OpaquePointer, Bool)>()
     static func setExtractFonts(_ library: OpaquePointer, extract: Bool) {
         setExtractFontsFunc.call((library, extract))

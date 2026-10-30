@@ -26,6 +26,8 @@ protocol LibraryWrapperType: Sendable {
     static func rendererDone(_ renderer: OpaquePointer)
 
     static func setRendererSize(_ renderer: OpaquePointer, size: CGSize)
+    static func setMargins(_ renderer: OpaquePointer, margins: FrameMargins)
+    static func setUseMargins(_ renderer: OpaquePointer, use: Bool)
     static func setExtractFonts(_ library: OpaquePointer, extract: Bool)
     static func addFont(_ library: OpaquePointer, name: String, data: Data)
     static func setFonts(
@@ -95,6 +97,24 @@ enum LibraryWrapper: LibraryWrapperType {
     static func setRendererSize(_ renderer: OpaquePointer, size: CGSize) {
         withLock(lock) {
             ass_set_frame_size(renderer, Int32(size.width), Int32(size.height))
+        }
+    }
+
+    static func setMargins(_ renderer: OpaquePointer, margins: FrameMargins) {
+        withLock(lock) {
+            ass_set_margins(
+                renderer,
+                Int32(margins.top.rounded()),
+                Int32(margins.bottom.rounded()),
+                Int32(margins.left.rounded()),
+                Int32(margins.right.rounded())
+            )
+        }
+    }
+
+    static func setUseMargins(_ renderer: OpaquePointer, use: Bool) {
+        withLock(lock) {
+            ass_set_use_margins(renderer, use ? 1 : 0)
         }
     }
 
