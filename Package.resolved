@@ -1,4 +1,5 @@
 {
+  "originHash" : "8ead97d175f05ed37d35bca2d43d747832cb8e8c0e1f016f9594f94e93df8c3f",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -21,10 +22,10 @@
     {
       "identity" : "swift-libass",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/mihai8804858/swift-libass",
+      "location" : "https://github.com/TheFireKahuna/swift-libass",
       "state" : {
-        "revision" : "a097db001228834c57ffb8c5245f3bccc8df8124",
-        "version" : "1.3.1"
+        "revision" : "5c2d7e37680e6ab7f40c056d28c19759e67e774e",
+        "version" : "1.4.0-fire.2"
       }
     },
     {
@@ -55,5 +56,5 @@
       }
     }
   ],
-  "version" : 2
+  "version" : 3
 }
