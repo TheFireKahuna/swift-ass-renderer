@@ -38,17 +38,17 @@ final class AssVideoComposition: Sendable {
         subtitleImage: ProcessedImage,
         request: AVAsynchronousCIImageFilteringRequest
     ) {
-        let subtitleTransform = CGAffineTransform.identity.translatedBy(
-            x: subtitleImage.imageRect.minX,
-            y: subtitleImage.imageRect.flippingY(for: request.renderSize.height).minY
-        ).scaledBy(
-            x: 1 / scale,
-            y: 1 / scale
-        )
-        let subtitleOverlay = CIImage(cgImage: subtitleImage.image).transformed(by: subtitleTransform)
-        let outputFrame = subtitleOverlay
-            .composited(over: sourceImage)
-            .cropped(to: request.sourceImage.extent)
+        let composited = subtitleImage.tiles.reduce(sourceImage) { image, tile in
+            let transform = CGAffineTransform.identity.translatedBy(
+                x: tile.rect.minX,
+                y: tile.rect.flippingY(for: request.renderSize.height).minY
+            ).scaledBy(
+                x: 1 / scale,
+                y: 1 / scale
+            )
+            return CIImage(cgImage: tile.image).transformed(by: transform).composited(over: image)
+        }
+        let outputFrame = composited.cropped(to: request.sourceImage.extent)
         request.finish(with: outputFrame, context: nil)
     }
 }

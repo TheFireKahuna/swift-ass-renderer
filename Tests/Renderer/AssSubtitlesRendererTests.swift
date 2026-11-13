@@ -21,6 +21,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         mockQueue = MockDispatchQueue()
         mockLibraryWrapper = MockLibraryWrapper.self
+        mockLibraryWrapper.reset()
         mockFontConfig = MockFontConfig()
         mockImagePipeline = MockImagePipeline()
         mockLogger = MockLogger()
@@ -209,6 +210,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let offset = 10.0
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
+        mockLibraryWrapper.readTrackStub = ASS_Track()
 
         let subRenderer = createRenderer()
         subRenderer.loadTrack(content: content)
@@ -233,7 +235,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     func test_reloadTrackContent_shouldNotPublishEmptyFrameWhileReplacingTrack() throws {
         // GIVEN
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
         mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -248,6 +250,10 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
             .dropFirst()
             .sink { frames.append($0) }
             .store(in: &cancellables)
+        var rendered: [AssSubtitlesRenderer.RenderedFrame] = []
+        subRenderer.framesPublisher()
+            .sink { rendered.append($0) }
+            .store(in: &cancellables)
         mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: false)
 
         // WHEN
@@ -256,6 +262,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         // THEN
         XCTAssert(frames.isEmpty)
         XCTAssertNotNil(subRenderer.currentFrame.value)
+        XCTAssertEqual(rendered, [.init(offset: 10, result: .unchanged)])
     }
 
     @MainActor
@@ -286,7 +293,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
         mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
-        mockImagePipeline.processStub = ProcessedImage(image: .from(color: .black), imageRect: rect)
+        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
         let subRenderer = createRenderer()
         subRenderer.loadTrack(content: "<CONTENT>")
         subRenderer.setTimeOffset(10)
@@ -355,6 +362,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let offset = 10.0
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
+        mockLibraryWrapper.readTrackStub = ASS_Track()
         mockContentsLoader.loadContentsStub = Just(content)
             .setFailureType(to: Error.self)
             .eraseToAnyPublisher()
@@ -597,7 +605,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
-    func test_setTimeOffset_whenFrameWasLoaded_shouldReturnProcessedImage() throws {
+    func test_setTimeOffset_whenFrameWasLoaded_shouldPublishProcessedImage() throws {
         // GIVEN
         let library = OpaquePointer(bitPattern: 1)!
         let renderer = OpaquePointer(bitPattern: 2)!
@@ -605,8 +613,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
-        let scaledDownImage = ProcessedImage(image: image.image, imageRect: (rect / scale).integral)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
         let assImage = ASS_Image()
         let changed = true
         mockLibraryWrapper.libraryInitStub = library
@@ -617,25 +625,24 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         // WHEN
         let subRenderer = createRenderer()
-        var images: [ProcessedImage?] = []
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
         subRenderer
             .framesPublisher()
-            .dropFirst()
-            .sink { images.append($0) }
+            .sink { frames.append($0) }
             .store(in: &cancellables)
         subRenderer.loadTrack(content: content)
         subRenderer.setCanvasSize(size, scale: scale)
-        images.removeAll()
+        frames.removeAll()
         subRenderer.setTimeOffset(10)
 
         // THEN
         XCTAssert(mockLibraryWrapper.renderImageFunc.wasCalled)
         XCTAssert(mockImagePipeline.processFunc.wasCalled)
-        XCTAssertEqual(images, [scaledDownImage])
+        XCTAssertEqual(frames, [.init(offset: 10, result: .loaded(scaledDownImage))])
     }
 
     @MainActor
-    func test_setTimeOffset_whenFrameWasNotLoaded_shouldReturnNil() throws {
+    func test_setTimeOffset_whenFrameWasNotLoaded_shouldPublishNone() throws {
         // GIVEN
         let library = OpaquePointer(bitPattern: 1)!
         let renderer = OpaquePointer(bitPattern: 2)!
@@ -643,8 +650,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let scale = 3.0
         let size = CGSize(width: 1920, height: 1080)
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
-        let scaledDownImage = ProcessedImage(image: image.image, imageRect: (rect / scale).integral)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -653,27 +660,29 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         // WHEN
         let subRenderer = createRenderer()
-        var images: [ProcessedImage?] = []
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
         subRenderer
             .framesPublisher()
-            .dropFirst()
-            .sink { images.append($0) }
+            .sink { frames.append($0) }
             .store(in: &cancellables)
         subRenderer.loadTrack(content: content)
         subRenderer.setCanvasSize(size, scale: scale)
-        images.removeAll()
+        frames.removeAll()
         subRenderer.setTimeOffset(10)
-        mockLibraryWrapper.renderImageStub = nil
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: nil, changed: true)
         mockImagePipeline.processStub = nil
         subRenderer.setTimeOffset(20)
 
         // THEN
         XCTAssert(mockLibraryWrapper.renderImageFunc.wasCalled)
-        XCTAssertEqual(images, [scaledDownImage, nil])
+        XCTAssertEqual(frames, [
+            .init(offset: 10, result: .loaded(scaledDownImage)),
+            .init(offset: 20, result: .none)
+        ])
     }
 
     @MainActor
-    func test_setTimeOffset_whenFrameWasUnchanged_shouldNotReturnAnything() throws {
+    func test_setTimeOffset_whenFrameWasUnchanged_shouldPublishUnchangedOnly() throws {
         // GIVEN
         let library = OpaquePointer(bitPattern: 1)!
         let renderer = OpaquePointer(bitPattern: 2)!
@@ -688,11 +697,10 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         // WHEN
         let subRenderer = createRenderer()
-        var images: [ProcessedImage?] = []
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
         subRenderer
             .framesPublisher()
-            .dropFirst()
-            .sink { images.append($0) }
+            .sink { frames.append($0) }
             .store(in: &cancellables)
         subRenderer.loadTrack(content: content)
         subRenderer.setCanvasSize(size, scale: scale)
@@ -700,7 +708,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         // THEN
         XCTAssert(mockLibraryWrapper.renderImageFunc.wasCalled)
-        XCTAssertEqual(images, [])
+        XCTAssertEqual(frames, [.init(offset: 0, result: .unchanged), .init(offset: 10, result: .unchanged)])
+        XCTAssertNil(subRenderer.currentFrame.value)
     }
 
     @MainActor
@@ -712,8 +721,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
-        let scaledDownImage = ProcessedImage(image: image.image, imageRect: (rect / scale).integral)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
         let assImage = ASS_Image()
         let changed = true
         mockLibraryWrapper.libraryInitStub = library
@@ -724,22 +733,24 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         // WHEN
         let subRenderer = createRenderer()
-        var images: [ProcessedImage?] = []
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
         subRenderer
             .framesPublisher()
-            .dropFirst()
-            .sink { images.append($0) }
+            .sink { frames.append($0) }
             .store(in: &cancellables)
         subRenderer.loadTrack(content: content)
         subRenderer.setCanvasSize(size, scale: scale)
-        images.removeAll()
+        frames.removeAll()
         subRenderer.setTimeOffset(10)
         subRenderer.reloadFrame()
 
         // THEN
         XCTAssert(mockLibraryWrapper.renderImageFunc.wasCalled)
         XCTAssert(mockImagePipeline.processFunc.wasCalled)
-        XCTAssertEqual(images, [scaledDownImage, scaledDownImage])
+        XCTAssertEqual(frames, [
+            .init(offset: 10, result: .loaded(scaledDownImage)),
+            .init(offset: 10, result: .loaded(scaledDownImage))
+        ])
     }
 
     @MainActor
@@ -751,8 +762,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
-        let scaledDownImage = ProcessedImage(image: image.image, imageRect: (rect / scale).integral)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
         let assImage = ASS_Image()
         let changed = true
         mockLibraryWrapper.libraryInitStub = library
@@ -783,7 +794,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let scale = 3.0
         let size = CGSize(width: 1920, height: 1080)
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -796,7 +807,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         subRenderer.loadTrack(content: content)
         subRenderer.setCanvasSize(size, scale: scale)
         subRenderer.loadFrame(offset: 10) { processedImage = $0 }
-        mockLibraryWrapper.renderImageStub = nil
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: nil, changed: true)
         mockImagePipeline.processStub = nil
         subRenderer.loadFrame(offset: 20) { processedImage = $0 }
 
@@ -814,8 +825,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(image: .from(color: .black), imageRect: rect)
-        let scaledDownImage = ProcessedImage(image: image.image, imageRect: (rect / scale).integral)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -936,6 +947,315 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
 
         // THEN
         XCTAssertEqual(dialogues, ["text2", "text3"])
+    }
+
+    @MainActor
+    func test_setTimeOffset_shouldPublishTileRectsDividedByScaleWithoutRounding() throws {
+        // GIVEN
+        let first = CGRect(x: 10, y: 20, width: 100, height: 50)
+        let second = CGRect(x: 301, y: 902, width: 7, height: 11)
+        let image = ProcessedImage(tiles: [
+            .init(image: .from(color: .black), rect: first),
+            .init(image: .from(color: .white), rect: second)
+        ])
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        mockImagePipeline.processStub = image
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setCanvasSize(CGSize(width: 1920, height: 1080), scale: 3)
+
+        // WHEN
+        subRenderer.setTimeOffset(10)
+
+        // THEN
+        let tiles = try XCTUnwrap(subRenderer.currentFrame.value?.tiles)
+        XCTAssertEqual(tiles.map(\.rect), [
+            CGRect(x: 10.0 / 3, y: 20.0 / 3, width: 100.0 / 3, height: 50.0 / 3),
+            CGRect(x: 301.0 / 3, y: 902.0 / 3, width: 7.0 / 3, height: 11.0 / 3)
+        ])
+        XCTAssertEqual(tiles.map(\.image), image.tiles.map(\.image))
+    }
+
+    @MainActor
+    func test_setTimeOffset_whenRenderHasNoImage_shouldPublishNoneWithoutProcessing() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: nil, changed: true)
+        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: .zero)])
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
+        subRenderer.framesPublisher()
+            .sink { frames.append($0) }
+            .store(in: &cancellables)
+
+        // WHEN
+        subRenderer.setTimeOffset(5)
+
+        // THEN
+        XCTAssertFalse(mockImagePipeline.processFunc.wasCalled)
+        XCTAssertEqual(frames, [.init(offset: 5, result: .none)])
+    }
+
+    @MainActor
+    func test_loadFrameSync_shouldPublishResultAtOffset() throws {
+        // GIVEN
+        let rect = CGRect(x: 30, y: 60, width: 90, height: 30)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        mockImagePipeline.processStub = image
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
+        subRenderer.framesPublisher()
+            .sink { frames.append($0) }
+            .store(in: &cancellables)
+
+        // WHEN
+        let result = subRenderer.loadFrameSync(offset: 7.5)
+
+        // THEN
+        XCTAssertEqual(result, .loaded(image))
+        XCTAssertEqual(frames, [.init(offset: 7.5, result: .loaded(image))])
+    }
+
+    @MainActor
+    func test_freeTrack_shouldPublishNoneAtZeroAndClearCurrentFrame() throws {
+        // GIVEN
+        let queue = MockDeferredDispatchQueue()
+        let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let subRenderer = AssSubtitlesRenderer(
+            workQueue: queue,
+            scheduler: .immediate,
+            wrapper: mockLibraryWrapper,
+            fontConfig: mockFontConfig,
+            pipeline: mockImagePipeline,
+            logger: mockLogger,
+            contentsLoader: mockContentsLoader,
+            librarySetup: nil,
+            rendererSetup: nil
+        )
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setTimeOffset(10)
+        queue.runPendingWork()
+        let track = try XCTUnwrap(subRenderer.currentTrack)
+        XCTAssertNotNil(subRenderer.currentFrame.value)
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
+        subRenderer.framesPublisher()
+            .sink { frames.append($0) }
+            .store(in: &cancellables)
+        mockLibraryWrapper.freeTrackFunc.reset()
+
+        // WHEN
+        subRenderer.freeTrack()
+
+        // THEN
+        XCTAssertEqual(subRenderer.currentOffset, 0)
+        XCTAssertEqual(frames, [], "published from the work queue, not the caller")
+        queue.runPendingWork()
+        XCTAssertEqual(frames, [.init(offset: 0, result: .none)])
+        XCTAssertNil(subRenderer.currentFrame.value)
+        XCTAssertNil(subRenderer.currentTrack)
+        XCTAssertEqual(mockLibraryWrapper.freeTrackFunc.arguments, [track])
+    }
+
+    @MainActor
+    func test_loadTrackHeader_shouldStartNewTrackAndFreePrevious() throws {
+        // GIVEN
+        let library = OpaquePointer(bitPattern: 1)!
+        let header = "[Script Info]\nScriptType: v4.00+\n"
+        mockLibraryWrapper.libraryInitStub = library
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.newTrackStub = ASS_Track()
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        let previousTrack = try XCTUnwrap(subRenderer.currentTrack)
+        mockLibraryWrapper.freeTrackFunc.reset()
+        mockLibraryWrapper.renderImageFunc.reset()
+
+        // WHEN
+        subRenderer.loadTrack(header: header)
+
+        // THEN
+        let argument = try XCTUnwrap(mockLibraryWrapper.newTrackFunc.argument)
+        XCTAssert(argument == (library, header))
+        XCTAssertFalse(mockLibraryWrapper.readTrackFunc.arguments.contains { $0.1 == header })
+        XCTAssertEqual(mockLibraryWrapper.freeTrackFunc.arguments, [previousTrack])
+        XCTAssertNotNil(subRenderer.currentTrack)
+        XCTAssertNotEqual(subRenderer.currentTrack, previousTrack)
+        XCTAssertFalse(mockLibraryWrapper.renderImageFunc.wasCalled)
+    }
+
+    @MainActor
+    func test_appendEvents_shouldProcessEachEventInOrderWithoutRendering() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.newTrackStub = ASS_Track()
+        let events = [
+            AssEvent(line: "2,0,Default,,0,0,0,,second", start: 1, duration: 2),
+            AssEvent(line: "1,0,Default,,0,0,0,,first", start: 1, duration: 2),
+            AssEvent(line: "3,0,Default,,0,0,0,,third", start: 4, duration: 0.5)
+        ]
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(header: "<HEADER>")
+        let track = try XCTUnwrap(subRenderer.currentTrack)
+        var frames: [AssSubtitlesRenderer.RenderedFrame] = []
+        subRenderer.framesPublisher()
+            .sink { frames.append($0) }
+            .store(in: &cancellables)
+
+        // WHEN
+        subRenderer.appendEvents(events)
+
+        // THEN
+        XCTAssertEqual(mockLibraryWrapper.processChunkFunc.arguments.map(\.1), events)
+        XCTAssert(mockLibraryWrapper.processChunkFunc.arguments.allSatisfy { $0.0 == track })
+        XCTAssertFalse(mockLibraryWrapper.renderImageFunc.wasCalled)
+        XCTAssertEqual(frames, [])
+    }
+
+    @MainActor
+    func test_appendEvents_whenTrackIsMissing_shouldDoNothing() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        let subRenderer = createRenderer()
+        mockQueue.executeAsyncFunc.reset()
+
+        // WHEN
+        subRenderer.appendEvents([])
+
+        // THEN
+        XCTAssertFalse(mockQueue.executeAsyncFunc.wasCalled)
+
+        // WHEN
+        subRenderer.appendEvents([AssEvent(line: "0,0,Default,,0,0,0,,text", start: 0, duration: 1)])
+
+        // THEN
+        XCTAssertFalse(mockLibraryWrapper.processChunkFunc.wasCalled)
+    }
+
+    @MainActor
+    func test_setStorageSize_shouldSetStorageSizeAndReloadFrame() throws {
+        // GIVEN
+        let renderer = OpaquePointer(bitPattern: 2)!
+        let size = CGSize(width: 1440, height: 1080)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = renderer
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setTimeOffset(12)
+        mockLibraryWrapper.renderImageFunc.reset()
+
+        // WHEN
+        subRenderer.setStorageSize(size)
+
+        // THEN
+        let argument = try XCTUnwrap(mockLibraryWrapper.setStorageSizeFunc.argument)
+        XCTAssert(argument == (renderer, size))
+        let renderArgument = try XCTUnwrap(mockLibraryWrapper.renderImageFunc.argument)
+        XCTAssertEqual(renderArgument.2, 12)
+    }
+
+    @MainActor
+    func test_setVideoColorimetry_shouldPassTransformForTrackMatrixToPipeline() throws {
+        // GIVEN
+        let video = VideoColorimetry(matrix: .bt709, isFullRange: false)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.colorMatrixStub = 3 // YCBCR_BT601_TV
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setTimeOffset(1)
+        XCTAssertEqual(mockImagePipeline.processFunc.argument?.1, .identity)
+
+        // WHEN
+        subRenderer.setVideoColorimetry(video)
+
+        // THEN
+        let transform = try XCTUnwrap(mockImagePipeline.processFunc.argument?.1)
+        XCTAssertEqual(transform, AssColorTransform(scriptMatrix: 3, video: video))
+        XCTAssertFalse(transform.isIdentity)
+        XCTAssertEqual(mockLibraryWrapper.colorMatrixFunc.argument, subRenderer.currentTrack)
+    }
+
+    @MainActor
+    func test_setVideoColorimetry_whenUnchanged_shouldNotRenderAgain() throws {
+        // GIVEN
+        let video = VideoColorimetry(matrix: .bt709, isFullRange: false)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setVideoColorimetry(video)
+        mockLibraryWrapper.renderImageFunc.reset()
+
+        // WHEN
+        subRenderer.setVideoColorimetry(video)
+
+        // THEN
+        XCTAssertFalse(mockLibraryWrapper.renderImageFunc.wasCalled)
+    }
+
+    @MainActor
+    func test_setVideoColorimetry_whenSetToNil_shouldPassIdentity() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.colorMatrixStub = 3
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setVideoColorimetry(VideoColorimetry(matrix: .bt709, isFullRange: false))
+        XCTAssertNotEqual(mockImagePipeline.processFunc.argument?.1, .identity)
+
+        // WHEN
+        subRenderer.setVideoColorimetry(nil)
+
+        // THEN
+        XCTAssertEqual(mockImagePipeline.processFunc.argument?.1, .identity)
+    }
+
+    @MainActor
+    func test_loadTrack_shouldRecomputeTransformFromNewTrackMatrix() throws {
+        // GIVEN
+        let video = VideoColorimetry(matrix: .bt709, isFullRange: false)
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.colorMatrixStub = 3 // YCBCR_BT601_TV
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setVideoColorimetry(video)
+        XCTAssertNotEqual(mockImagePipeline.processFunc.argument?.1, .identity)
+
+        // WHEN
+        mockLibraryWrapper.colorMatrixStub = 5 // YCBCR_BT709_TV
+        subRenderer.reloadTrack(content: "<NEW_CONTENT>")
+
+        // THEN
+        XCTAssertEqual(mockImagePipeline.processFunc.argument?.1, .identity)
     }
 }
 

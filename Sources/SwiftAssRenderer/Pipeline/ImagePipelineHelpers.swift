@@ -187,3 +187,9 @@ private func loop(iterations: Int, body: (Int) -> Void) {
         index += 1
     }
 }
+
+extension ASS_Image {
+    var imageRect: CGRect {
+        CGRect(x: Int(dst_x), y: Int(dst_y), width: Int(w), height: Int(h))
+    }
+}

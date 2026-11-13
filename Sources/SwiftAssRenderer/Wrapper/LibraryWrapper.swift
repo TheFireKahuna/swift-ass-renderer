@@ -2,7 +2,8 @@ import Foundation
 @preconcurrency import SwiftLibass
 
 struct LibraryRenderResult: Sendable {
-    let image: ASS_Image
+    /// First image of the frame; nil when nothing is visible.
+    let image: ASS_Image?
     let changed: Bool
 }
 
@@ -28,6 +29,7 @@ protocol LibraryWrapperType: Sendable {
     static func setRendererSize(_ renderer: OpaquePointer, size: CGSize)
     static func setMargins(_ renderer: OpaquePointer, margins: FrameMargins)
     static func setUseMargins(_ renderer: OpaquePointer, use: Bool)
+    static func setStorageSize(_ renderer: OpaquePointer, size: CGSize)
     static func setExtractFonts(_ library: OpaquePointer, extract: Bool)
     static func addFont(_ library: OpaquePointer, name: String, data: Data)
     static func setFonts(
@@ -39,13 +41,16 @@ protocol LibraryWrapperType: Sendable {
     )
 
     static func readTrack(_ library: OpaquePointer, content: String) -> UnsafeMutablePointer<ASS_Track>?
+    static func newTrack(_ library: OpaquePointer, header: String) -> UnsafeMutablePointer<ASS_Track>?
+    static func processChunk(_ track: UnsafeMutablePointer<ASS_Track>, event: AssEvent)
+    static func colorMatrix(of track: UnsafeMutablePointer<ASS_Track>) -> Int32
     static func freeTrack(_ track: UnsafeMutablePointer<ASS_Track>)
 
     static func renderImage(
         _ renderer: OpaquePointer,
         track: inout ASS_Track,
         at offset: TimeInterval
-    ) -> LibraryRenderResult?
+    ) -> LibraryRenderResult
 }
 
 enum LibraryWrapper: LibraryWrapperType {
@@ -118,6 +123,12 @@ enum LibraryWrapper: LibraryWrapperType {
         }
     }
 
+    static func setStorageSize(_ renderer: OpaquePointer, size: CGSize) {
+        withLock(lock) {
+            ass_set_storage_size(renderer, Int32(size.width), Int32(size.height))
+        }
+    }
+
     static func setExtractFonts(_ library: OpaquePointer, extract: Bool) {
         withLock(lock) {
             ass_set_extract_fonts(library, extract ? 1 : 0)
@@ -161,6 +172,37 @@ enum LibraryWrapper: LibraryWrapperType {
         }
     }
 
+    static func newTrack(_ library: OpaquePointer, header: String) -> UnsafeMutablePointer<ASS_Track>? {
+        withLock(lock) {
+            guard let track = ass_new_track(library) else { return nil }
+            // A Matroska CodecPrivate is often NUL-terminated; libass reads C strings and would stop there.
+            var bytes = Array(header.replacingOccurrences(of: "\0", with: "").utf8CString.dropLast())
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                ass_process_codec_private(track, buffer.baseAddress, Int32(buffer.count))
+            }
+            // Duplicate checking keys on ReadOrder, which some muxers write as 0 on every event; the
+            // caller appends each event once instead.
+            ass_set_check_readorder(track, 0)
+            return track
+        }
+    }
+
+    static func processChunk(_ track: UnsafeMutablePointer<ASS_Track>, event: AssEvent) {
+        withLock(lock) {
+            var bytes = Array(event.line.utf8CString.dropLast())
+            bytes.withUnsafeMutableBufferPointer { buffer in
+                ass_process_chunk(
+                    track, buffer.baseAddress, Int32(buffer.count),
+                    Int64((event.start * 1000).rounded()), Int64((event.duration * 1000).rounded())
+                )
+            }
+        }
+    }
+
+    static func colorMatrix(of track: UnsafeMutablePointer<ASS_Track>) -> Int32 {
+        Int32(track.pointee.YCbCrMatrix.rawValue)
+    }
+
     static func freeTrack(_ track: UnsafeMutablePointer<ASS_Track>) {
         withLock(lock) {
             ass_free_track(track)
@@ -171,13 +213,14 @@ enum LibraryWrapper: LibraryWrapperType {
         _ renderer: OpaquePointer,
         track: inout ASS_Track,
         at offset: TimeInterval
-    ) -> LibraryRenderResult? {
+    ) -> LibraryRenderResult {
         withLock(lock) {
             var changed: Int32 = 0
-            let millisecond = Int64(offset * 1000)
-            guard let frame = ass_render_frame(renderer, &track, millisecond, &changed) else { return nil }
+            // Rounded, not truncated: a frame time such as 4.004 s is 4003.9999 ms in binary floating point.
+            let millisecond = Int64((offset * 1000).rounded())
+            let frame = ass_render_frame(renderer, &track, millisecond, &changed)
 
-            return LibraryRenderResult(image: frame.pointee, changed: changed != 0)
+            return LibraryRenderResult(image: frame?.pointee, changed: changed != 0)
         }
     }
 }

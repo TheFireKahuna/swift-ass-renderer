@@ -9,10 +9,23 @@ public typealias RendererSetup = @Sendable (_ library: OpaquePointer, _ renderer
 /// ASS/SSA subtitles renderer. Manages the current ASS track, 
 /// current time offset and current visible frame (``ProcessedImage``).
 public final class AssSubtitlesRenderer: Sendable {
-    public enum FrameRenderResult: Sendable {
+    public enum FrameRenderResult: Equatable, Sendable {
         case loaded(ProcessedImage)
         case unchanged
         case none
+    }
+
+    /// The outcome of one render and the offset it was rendered at, so a host that renders ahead of the
+    /// display can put each frame on screen at the moment it belongs to.
+    public struct RenderedFrame: Equatable, Sendable {
+        public let offset: TimeInterval
+        /// `.unchanged` means the frame looks exactly like the previous render's.
+        public let result: FrameRenderResult
+
+        public init(offset: TimeInterval, result: FrameRenderResult) {
+            self.offset = offset
+            self.result = result
+        }
     }
 
     private let workQueue: DispatchQueueType
@@ -42,6 +55,11 @@ public final class AssSubtitlesRenderer: Sendable {
     private let pendingOffsetLock = NSLock()
     nonisolated(unsafe) private(set) var currentOffset: TimeInterval = 0
     nonisolated(unsafe) private(set) var currentFrame = CurrentValueSubject<ProcessedImage?, Never>(nil)
+    nonisolated(unsafe) private let renderedFrames = PassthroughSubject<RenderedFrame, Never>()
+    /// The video's colorimetry, set by the host. Read and written on the work queue.
+    nonisolated(unsafe) private var videoColorimetry: VideoColorimetry?
+    /// Script colours to displayed colours for the current track and video. Work queue only.
+    nonisolated(unsafe) private var colorTransform = AssColorTransform.identity
 
     /// - Parameters:
     ///   - fontConfig: Fonts configuration. Defines where the fonts and fonts cache is located, 
@@ -119,6 +137,43 @@ public final class AssSubtitlesRenderer: Sendable {
         }
     }
 
+    /// Start a track that receives its events as they arrive, the way a Matroska stream carries them.
+    ///
+    /// - Parameters:
+    ///   - header: The script's header (`[Script Info]`, styles and, optionally, the `[Events]` format line),
+    ///   such as a Matroska track's CodecPrivate.
+    ///
+    /// Add events with ``appendEvents(_:)``. Each event keeps its own `ReadOrder`, which decides how
+    /// events on the same layer stack. Events are not de-duplicated: append each one once.
+    public func loadTrack(header: String) {
+        workQueue.executeAsync { [weak self] in
+            guard let self else { return }
+            guard let library else {
+                return logger.log(message: LogMessage(
+                    message: "Track cannot be loaded since library has not been initialized",
+                    level: .verbose
+                ))
+            }
+            replaceTrack(with: wrapper.newTrack(library, header: header))
+        }
+    }
+
+    /// Add events to a track started with ``loadTrack(header:)``.
+    ///
+    /// Nothing is rendered by this call; the next render includes the new events.
+    public func appendEvents(_ events: [AssEvent]) {
+        guard !events.isEmpty else { return }
+        workQueue.executeAsync { [weak self] in
+            guard let self else { return }
+            withLock(trackLock) {
+                guard let currentTrack else { return }
+                for event in events {
+                    wrapper.processChunk(currentTrack, event: event)
+                }
+            }
+        }
+    }
+
     /// Load a new track from provided content and render it at the current time offset.
     ///
     /// - Parameters:
@@ -135,7 +190,8 @@ public final class AssSubtitlesRenderer: Sendable {
                 ))
             }
             replaceTrack(with: wrapper.readTrack(library, content: content))
-            setCurrentFrame(from: renderFrame(at: currentOffset) ?? .none)
+            let offset = currentOffset
+            publish(renderFrame(at: offset) ?? .none, at: offset)
         }
     }
 
@@ -165,10 +221,10 @@ public final class AssSubtitlesRenderer: Sendable {
 
     /// Removes current track and resets the time offset and current visible frame.
     public func freeTrack() {
-        currentFrame.value = nil
         currentOffset = 0
         workQueue.executeAsync { [weak self] in
             self?.replaceTrack(with: nil)
+            self?.publish(.none, at: 0)
         }
     }
 
@@ -225,6 +281,29 @@ public final class AssSubtitlesRenderer: Sendable {
         }
     }
 
+    /// Set the video's storage size: its coded width and height in pixels, before any pixel aspect ratio.
+    ///
+    /// With the picture's displayed rect (the canvas less ``setFrameMargins(_:useMargins:)``), this gives
+    /// libass the pixel aspect ratio, so anamorphic video keeps round glyphs and correctly scaled blur.
+    public func setStorageSize(_ size: CGSize) {
+        workQueue.executeAsync { [weak self] in
+            guard let self, let renderer else { return }
+            wrapper.setStorageSize(renderer, size: size)
+            reloadFrame()
+        }
+    }
+
+    /// Set how the video's YCbCr becomes RGB on screen, so script colours are shown as their author saw
+    /// them against the video (see ``AssColorTransform``). nil leaves colours as written.
+    public func setVideoColorimetry(_ colorimetry: VideoColorimetry?) {
+        workQueue.executeAsync { [weak self] in
+            guard let self, videoColorimetry != colorimetry else { return }
+            videoColorimetry = colorimetry
+            updateColorTransform()
+            reloadFrame()
+        }
+    }
+
     /// Set current visible subtitle offset.
     ///
     /// - Parameters:
@@ -250,16 +329,14 @@ public final class AssSubtitlesRenderer: Sendable {
         }
     }
 
-    /// Publisher where the rendered images to be drawn are being published.
+    /// Publisher of every render's outcome, tagged with the offset it was rendered at.
     ///
-    /// - Returns: A Combine publisher where ``ProcessedImage`` that have to be drawn on the canvas are being published.
+    /// - Returns: A Combine publisher of ``RenderedFrame``, one per render, in render order.
     ///
     /// When using the renderer with ``AssSubtitles`` / ``AssSubtitlesView``,
     /// you don't have to subscribe to this publisher and render the images.
-    public func framesPublisher() -> AnyPublisher<ProcessedImage?, Never> {
-        currentFrame
-            .share()
-            .removeDuplicates { $0 == nil && $1 == nil }
+    public func framesPublisher() -> AnyPublisher<RenderedFrame, Never> {
+        renderedFrames
             .receive(on: scheduler)
             .eraseToAnyPublisher()
     }
@@ -291,7 +368,7 @@ public final class AssSubtitlesRenderer: Sendable {
     /// - Returns: ``FrameRenderResult`` relative to last renderer frame.
     public func loadFrameSync(offset: TimeInterval) -> FrameRenderResult {
         guard let result = renderFrame(at: offset) else { return .none }
-        setCurrentFrame(from: result)
+        publish(result, at: offset)
 
         return result
     }
@@ -321,11 +398,19 @@ private extension AssSubtitlesRenderer {
             currentTrack = track
             previousTrack.map(wrapper.freeTrack)
         }
+        updateColorTransform()
+    }
+
+    /// Work queue only.
+    func updateColorTransform() {
+        let scriptMatrix = withLock(trackLock) { currentTrack.map { wrapper.colorMatrix(of: $0) } }
+        colorTransform = scriptMatrix.map { AssColorTransform(scriptMatrix: $0, video: videoColorimetry) }
+            ?? .identity
     }
 
     func renderCurrentTrack(at offset: TimeInterval) {
         guard let result = renderFrame(at: offset) else { return }
-        setCurrentFrame(from: result)
+        publish(result, at: offset)
     }
 
     /// Nil without a track. The frame is published by the caller, outside `trackLock`,
@@ -337,12 +422,13 @@ private extension AssSubtitlesRenderer {
         }
     }
 
-    private func setCurrentFrame(from result: FrameRenderResult) {
+    private func publish(_ result: FrameRenderResult, at offset: TimeInterval) {
         switch result {
         case .unchanged: break
         case .none: currentFrame.value = nil
         case .loaded(let image): currentFrame.value = image
         }
+        renderedFrames.send(RenderedFrame(offset: offset, result: result))
     }
 
     func frame(at offset: TimeInterval, in track: inout ASS_Track) -> FrameRenderResult {
@@ -353,18 +439,19 @@ private extension AssSubtitlesRenderer {
             ))
             return .none
         }
-        guard let result = wrapper.renderImage(renderer, track: &track, at: offset) else {
-            return .none
-        }
+        let result = wrapper.renderImage(renderer, track: &track, at: offset)
         guard result.changed else { return .unchanged }
-        let images = linkedImages(from: result.image)
-        let boundingRect = imagesBoundingRect(images: images)
-        guard let processedImage = pipeline.process(images: images, boundingRect: boundingRect) else {
+        guard let image = result.image,
+              let processed = pipeline.process(images: linkedImages(from: image), colorTransform: colorTransform)
+        else {
             return .none
         }
-        let imageRect = (processedImage.imageRect / canvasScale).integral
-
-        return .loaded(ProcessedImage(image: processedImage.image, imageRect: imageRect))
+        // Not rounded to whole points: a tile drawn at a fractional point origin still lands on whole
+        // pixels, where rounding would resample it.
+        let scale = canvasScale
+        return .loaded(ProcessedImage(tiles: processed.tiles.map {
+            ProcessedImage.Tile(image: $0.image, rect: $0.rect / scale)
+        }))
     }
 
     func loadContents(from url: URL, completion: @escaping (String) -> Void) {

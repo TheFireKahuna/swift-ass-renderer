@@ -103,8 +103,8 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         defer { LibraryWrapper.freeTrack(track) }
 
         func renderedRect(at offset: TimeInterval) -> CGRect? {
-            LibraryWrapper.renderImage(renderer, track: &track.pointee, at: offset)
-                .map { imagesBoundingRect(images: linkedImages(from: $0.image)) }
+            LibraryWrapper.renderImage(renderer, track: &track.pointee, at: offset).image
+                .map { imagesBoundingRect(images: linkedImages(from: $0)) }
                 .flatMap { $0.isEmpty || $0.isInfinite ? nil : $0 }
         }
 
@@ -190,7 +190,7 @@ final class LibraryWrapperTests: XCTestCase, @unchecked Sendable {
         """))
 
         defer { LibraryWrapper.freeTrack(track) }
-        XCTAssertNotNil(LibraryWrapper.renderImage(renderer, track: &track.pointee, at: 1))
+        XCTAssertNotNil(LibraryWrapper.renderImage(renderer, track: &track.pointee, at: 1).image)
         let selection = messages.first { $0.hasPrefix("fontselect: (Adobe Arabic") }
         XCTAssert(selection?.contains("AdobeArabic-Bold") == true, "\(messages)")
     }

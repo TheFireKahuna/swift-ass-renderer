@@ -6,22 +6,22 @@ import AppKit
 import SwiftUI
 import Combine
 
-/// Callback called when image view is being updated (subtitle image set, updated or removed).
+/// Callback called when the subtitle image is set, updated or removed.
 /// The `dialogues` argument is not sanitized and might include ASS formatting tags.
 public typealias AssSubtitlesImageCallback = (
     _ subtitlesView: AssSubtitlesView,
-    _ subtitlesImageView: PlatformImageView,
     _ processedImage: ProcessedImage?,
     _ dialogues: [String]
 ) -> Void
 
 /// `UIView` /  `NSView` capable or drawing rendered image bitmaps to the screen,
-/// by subscribing to ``AssSubtitlesRenderer``  events and rendering output ``ProcessedImage`` in a image view.
+/// by subscribing to ``AssSubtitlesRenderer``  events and drawing each ``ProcessedImage`` tile in a layer.
 public final class AssSubtitlesView: PlatformView {
     public let renderer: AssSubtitlesRenderer
 
     private let canvasScale: CGFloat
-    private let imageView = PlatformImageView()
+    private let tilesLayer = CALayer()
+    private var tileLayers: [CALayer] = []
     private var lastRenderBounds = CGRect.zero
     private var cancellables = Set<AnyCancellable>()
     private var imageCallback: AssSubtitlesImageCallback?
@@ -93,13 +93,14 @@ private extension AssSubtitlesView {
 
     @MainActor
     func setupView() {
-        addSubview(imageView)
         #if canImport(UIKit)
         backgroundColor = .clear
         isUserInteractionEnabled = false
+        layer.addSublayer(tilesLayer)
         #elseif canImport(AppKit)
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
+        layer?.addSublayer(tilesLayer)
         #endif
     }
 
@@ -108,46 +109,58 @@ private extension AssSubtitlesView {
         renderer
             .framesPublisher()
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] in self?.handleFrameChanged($0) }
+            .sink { [weak self] frame in
+                switch frame.result {
+                case .unchanged: break
+                case .none: self?.handleFrameChanged(nil)
+                case .loaded(let image): self?.handleFrameChanged(image)
+                }
+            }
             .store(in: &cancellables)
     }
 
     @MainActor
     func handleFrameChanged(_ image: ProcessedImage?) {
-        if let image {
-            resizeImageView(for: image)
-            #if canImport(UIKit)
-            imageView.image = PlatformImage(cgImage: image.image)
-            #elseif canImport(AppKit)
-            imageView.image = PlatformImage(cgImage: image.image, size: image.imageRect.size)
-            #endif
-            imageView.isHidden = false
-        } else {
-            imageView.isHidden = true
-            imageView.image = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        lastRenderBounds = bounds
+        tilesLayer.setAffineTransform(.identity)
+        tilesLayer.frame = CGRect(origin: .zero, size: bounds.size)
+        let tiles = image?.tiles ?? []
+        while tileLayers.count < tiles.count {
+            let tileLayer = CALayer()
+            tileLayer.contentsGravity = .resize
+            tilesLayer.addSublayer(tileLayer)
+            tileLayers.append(tileLayer)
         }
+        for (index, tileLayer) in tileLayers.enumerated() {
+            if index < tiles.count {
+                tileLayer.contents = tiles[index].image
+                tileLayer.frame = imageFrame(for: tiles[index].rect)
+                tileLayer.isHidden = false
+            } else {
+                tileLayer.contents = nil
+                tileLayer.isHidden = true
+            }
+        }
+        CATransaction.commit()
         if let imageCallback {
             let dialogues = renderer.dialogues(at: renderer.currentOffset)
-            imageCallback(self, imageView, image, dialogues)
+            imageCallback(self, image, dialogues)
         }
     }
 
-    @MainActor
-    func resizeImageView(for image: ProcessedImage) {
-        lastRenderBounds = bounds
-        imageView.frame = imageFrame(for: image.imageRect)
-    }
-
+    /// Stretches the shown tiles with the view until the renderer delivers a frame for the new size.
     @MainActor
     func resizeImageAtLayout() {
-        if lastRenderBounds.isEmpty || bounds.isEmpty || imageView.image == nil { return }
-        let ratioX = 1 / (lastRenderBounds.width / bounds.width)
-        let ratioY = 1 / (lastRenderBounds.height / bounds.height)
-        let newOrigin = CGPoint(x: imageView.frame.origin.x * ratioX, y: imageView.frame.origin.y * ratioY)
-        let newSize = CGSize(width: imageView.frame.width * ratioX, height: imageView.frame.height * ratioY)
-        let newFrame = CGRect(origin: newOrigin, size: newSize).integral
+        if lastRenderBounds.isEmpty || bounds.isEmpty { return }
         CATransaction.begin()
-        imageView.frame = newFrame
+        CATransaction.setDisableActions(true)
+        tilesLayer.bounds = CGRect(origin: .zero, size: lastRenderBounds.size)
+        tilesLayer.setAffineTransform(CGAffineTransform(
+            scaleX: bounds.width / lastRenderBounds.width, y: bounds.height / lastRenderBounds.height
+        ))
+        tilesLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
         CATransaction.commit()
     }
 
