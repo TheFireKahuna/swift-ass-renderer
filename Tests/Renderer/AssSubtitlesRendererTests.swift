@@ -235,7 +235,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     func test_reloadTrackContent_shouldNotPublishEmptyFrameWhileReplacingTrack() throws {
         // GIVEN
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
         mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -293,7 +293,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
         mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
-        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
         let subRenderer = createRenderer()
         subRenderer.loadTrack(content: "<CONTENT>")
         subRenderer.setTimeOffset(10)
@@ -613,8 +613,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
-        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
+        let scaledDownImage = ProcessedImage(tiles: [image.tiles[0].moved(to: rect / scale)])
         let assImage = ASS_Image()
         let changed = true
         mockLibraryWrapper.libraryInitStub = library
@@ -650,8 +650,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let scale = 3.0
         let size = CGSize(width: 1920, height: 1080)
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
-        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
+        let scaledDownImage = ProcessedImage(tiles: [image.tiles[0].moved(to: rect / scale)])
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -721,8 +721,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
-        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
+        let scaledDownImage = ProcessedImage(tiles: [image.tiles[0].moved(to: rect / scale)])
         let assImage = ASS_Image()
         let changed = true
         mockLibraryWrapper.libraryInitStub = library
@@ -762,8 +762,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
-        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
+        let scaledDownImage = ProcessedImage(tiles: [image.tiles[0].moved(to: rect / scale)])
         let assImage = ASS_Image()
         let changed = true
         mockLibraryWrapper.libraryInitStub = library
@@ -794,7 +794,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let scale = 3.0
         let size = CGSize(width: 1920, height: 1080)
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -825,8 +825,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let size = CGSize(width: 1920, height: 1080)
         let scale = 3.0
         let rect = CGRect(x: 10, y: 10, width: 100, height: 100)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
-        let scaledDownImage = ProcessedImage(tiles: [.init(image: image.tiles[0].image, rect: rect / scale)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
+        let scaledDownImage = ProcessedImage(tiles: [image.tiles[0].moved(to: rect / scale)])
         mockLibraryWrapper.libraryInitStub = library
         mockLibraryWrapper.rendererInitStub = renderer
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -955,8 +955,8 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         let first = CGRect(x: 10, y: 20, width: 100, height: 50)
         let second = CGRect(x: 301, y: 902, width: 7, height: 11)
         let image = ProcessedImage(tiles: [
-            .init(image: .from(color: .black), rect: first),
-            .init(image: .from(color: .white), rect: second)
+            .init(image: .from(color: .black), rect: first, pixels: Data(count: 4), bytesPerRow: 4),
+            .init(image: .from(color: .white), rect: second, pixels: Data(count: 4), bytesPerRow: 4)
         ])
         mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
@@ -986,7 +986,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
         mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: nil, changed: true)
-        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: .zero)])
+        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: .zero, pixels: Data(count: 4), bytesPerRow: 4)])
         let subRenderer = createRenderer()
         subRenderer.loadTrack(content: "<CONTENT>")
         var frames: [AssSubtitlesRenderer.RenderedFrame] = []
@@ -1006,7 +1006,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     func test_loadFrameSync_shouldPublishResultAtOffset() throws {
         // GIVEN
         let rect = CGRect(x: 30, y: 60, width: 90, height: 30)
-        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
         mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
@@ -1028,6 +1028,45 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
     }
 
     @MainActor
+    func test_imageAt_whenUnchanged_shouldReturnTheLastRendersImage() throws {
+        // GIVEN
+        let rect = CGRect(x: 30, y: 60, width: 90, height: 30)
+        let image = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
+        mockImagePipeline.processStub = image
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+        subRenderer.setTimeOffset(4)
+
+        // WHEN: libass reports the next frame unchanged since that render
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: false)
+        let unchanged = subRenderer.image(at: 4.04)
+
+        // THEN
+        XCTAssertEqual(unchanged, image)
+    }
+
+    @MainActor
+    func test_imageAt_whenNothingShows_shouldReturnNil() throws {
+        // GIVEN
+        mockLibraryWrapper.libraryInitStub = OpaquePointer(bitPattern: 1)!
+        mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
+        mockLibraryWrapper.readTrackStub = ASS_Track()
+        mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: nil, changed: true)
+        let subRenderer = createRenderer()
+        subRenderer.loadTrack(content: "<CONTENT>")
+
+        // WHEN
+        let image = subRenderer.image(at: 9)
+
+        // THEN
+        XCTAssertNil(image)
+    }
+
+    @MainActor
     func test_freeTrack_shouldPublishNoneAtZeroAndClearCurrentFrame() throws {
         // GIVEN
         let queue = MockDeferredDispatchQueue()
@@ -1036,7 +1075,7 @@ final class AssSubtitlesRendererTests: XCTestCase, @unchecked Sendable {
         mockLibraryWrapper.rendererInitStub = OpaquePointer(bitPattern: 2)!
         mockLibraryWrapper.readTrackStub = ASS_Track()
         mockLibraryWrapper.renderImageStub = LibraryRenderResult(image: ASS_Image(), changed: true)
-        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect)])
+        mockImagePipeline.processStub = ProcessedImage(tiles: [.init(image: .from(color: .black), rect: rect, pixels: Data(count: 4), bytesPerRow: 4)])
         let subRenderer = AssSubtitlesRenderer(
             workQueue: queue,
             scheduler: .immediate,

@@ -373,6 +373,22 @@ public final class AssSubtitlesRenderer: Sendable {
         return result
     }
 
+    /// Renders the frame at `offset` on the calling thread and returns it whole: the frame libass draws there, or
+    /// nil when nothing shows. Where libass reports the frame unchanged since its last render, whoever asked for that
+    /// one, the image of that render is returned, so a caller never has to know what came before.
+    public func image(at offset: TimeInterval) -> ProcessedImage? {
+        guard let result = renderFrame(at: offset) else { return nil }
+        switch result {
+        case .unchanged: return currentFrame.value
+        case .none:
+            currentFrame.value = nil
+            return nil
+        case .loaded(let image):
+            currentFrame.value = image
+            return image
+        }
+    }
+
     /// Load subtitle dialogues at the given offset.
     ///
     /// - Parameters:
@@ -449,9 +465,7 @@ private extension AssSubtitlesRenderer {
         // Not rounded to whole points: a tile drawn at a fractional point origin still lands on whole
         // pixels, where rounding would resample it.
         let scale = canvasScale
-        return .loaded(ProcessedImage(tiles: processed.tiles.map {
-            ProcessedImage.Tile(image: $0.image, rect: $0.rect / scale)
-        }))
+        return .loaded(ProcessedImage(tiles: processed.tiles.map { $0.moved(to: $0.rect / scale) }))
     }
 
     func loadContents(from url: URL, completion: @escaping (String) -> Void) {

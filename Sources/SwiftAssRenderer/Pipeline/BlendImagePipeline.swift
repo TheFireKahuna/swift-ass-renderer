@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import SwiftLibass
 import SwiftAssBlend
 
@@ -79,13 +80,9 @@ public final class BlendImagePipeline: ImagePipelineType {
                                       colorTransform.apply(to: image.color))
         }
 
-        guard let provider = CGDataProvider(
-            dataInfo: nil, data: pixels, size: byteCount,
-            releaseData: { _, data, _ in free(UnsafeMutableRawPointer(mutating: data)) }
-        ) else {
-            free(pixels)
-            return nil
-        }
+        // One allocation for both: the image reads the bytes the tile hands out, and the last of them frees it.
+        let bytes = Data(bytesNoCopy: pixels, count: byteCount, deallocator: .free)
+        guard let provider = CGDataProvider(data: bytes as CFData) else { return nil }
         guard let image = CGImage(
             width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: stride,
             space: colorSpace, bitmapInfo: bitmapInfo, provider: provider, decode: nil,
@@ -93,6 +90,7 @@ public final class BlendImagePipeline: ImagePipelineType {
         ) else {
             return nil
         }
-        return ProcessedImage.Tile(image: image, rect: CGRect(x: minX, y: minY, width: width, height: height))
+        return ProcessedImage.Tile(image: image, rect: CGRect(x: minX, y: minY, width: width, height: height),
+                                   pixels: bytes, bytesPerRow: stride)
     }
 }

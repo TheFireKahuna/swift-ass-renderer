@@ -88,6 +88,17 @@ final class BlendImagePipelineTests: PipelineTestCase {
         XCTAssertEqual(result.tiles.map(\.rect), [CGRect(x: 10, y: 10, width: 15, height: 12)])
     }
 
+    func test_process_tilePixels_shouldBeTheBytesItsImageDraws() throws {
+        let image = makeImage(x: 3, y: 4, width: 7, height: 5, coverage: 200, color: 0x3366_9900)
+
+        let tile = try XCTUnwrap(pipeline.process(images: [image], colorTransform: .identity)?.tiles.first)
+        let drawn = try XCTUnwrap(tile.image.dataProvider?.data as Data?)
+
+        XCTAssertEqual(tile.bytesPerRow, tile.image.bytesPerRow)
+        XCTAssertEqual(tile.pixels.count, tile.bytesPerRow * tile.image.height)
+        XCTAssertEqual(tile.pixels, drawn)
+    }
+
     func test_process_imagesAFewPixelsApart_shouldShareOneTile() throws {
         let first = makeImage(x: 0, y: 0, width: 4, height: 4, coverage: 255, color: 0x0000_0000)
         let second = makeImage(x: 8, y: 0, width: 4, height: 4, coverage: 255, color: 0x0000_0000)
